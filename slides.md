@@ -109,3 +109,12 @@ How to assign variables to environments?
 - Initialize environment.
 
 What about nested lambdas that capture variables in parent scopes?
+- We need a reference to the environment class
+- But wait: we just introduced a local in scope with that exact reference
+- Let's just capture that like a regular local variable
+
+---
+
+# Tricky bits: `this` Reference
+
+What about fields?
