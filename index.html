@@ -18,6 +18,14 @@
         color: white;
       }
       .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono'; }
+      .left-column {
+        float: left;
+        width: 49.5%;
+      }
+      .right-column {
+        float: right;
+        width: 49.5%;
+      }
     </style>
   </head>
   <body>
@@ -25,7 +33,10 @@
     </script>
     <script>
       var slideshow = remark.create({
-        sourceUrl: 'slides.md'
+        sourceUrl: 'slides.md',
+        ratio: '16:9',
+        highlightStyle: "vs",
+        highlightLines: true
       });
     </script>
   </body>

@@ -27,6 +27,9 @@ Many terms for roughly the same thing:
 
 # Example
 
+.left-column[
+**Original**
+
 ```csharp
 class C {
     void M() {
@@ -35,15 +38,21 @@ class C {
     }
 }
 ```
+]
 
-=>
+.right-column[
+**Generated**
 
 ```csharp
 class C {
-    int <>lambda() => 0; // <> makes name 'unspeakable' in C#
-    void M() { <>lambda(); }
+    // <> makes name 'unspeakable' in C#
+    int <>lambda() => 0;
+    void M() { 
+        <>lambda();
+    }
 }
 ```
+]
 
 ---
 
@@ -65,6 +74,7 @@ Tricky part is captured variables -- variables must be passed in somehow
 
 # Example
 
+.left-column[
 ```csharp
 class C {
     void M() {
@@ -74,13 +84,15 @@ class C {
     }
 }
 ```
+]
 
-
+.right-column[
 ```csharp
 class C {
     class Environment {
         int x;
-        static int <>lambda() => this.x + 1;
+        static int <>lambda()
+            => this.x + 1;
     }
 
     void M()
@@ -91,6 +103,7 @@ class C {
     }
 }
 ```
+]
 
 ---
 
@@ -110,11 +123,183 @@ How to assign variables to environments?
 
 What about nested lambdas that capture variables in parent scopes?
 - We need a reference to the environment class
-- But wait: we just introduced a local in scope with that exact reference
-- Let's just capture that like a regular local variable
+- But wait: we're *in* that environment class
+- Let's just capture `this`
 
 ---
 
-# Tricky bits: `this` Reference
+.left-column[
+**Original**
 
-What about fields?
+```csharp
+class C {
+    void M(int x) {
+        int y = 0;
+        Action f = () =>
+        {
+            int z = x;
+            Action f2 = () =>
+            {
+                y += z;
+            };
+            f2();
+        }
+        f();
+    }
+}
+```
+]
+
+.right-column[
+**Generated (Stage 1)**
+
+```csharp
+class C {
+    class OuterEnv {
+        int x;
+        int y;
+
+        void <>lambda() {
+            int z = this.x;
+            Action f2 = () =>
+            {
+                y += z; // Haven't rewritten yet
+            };
+            f2();
+        }
+    }
+
+    void M(int x) {
+        var outerEnv = new OuterEnv();
+        outerEnv.x = x;
+        outerEnv.y = 0;
+        Action f = outerEnv.<>lambda;
+        f();
+    }
+}
+```
+]
+
+---
+
+.left-column[
+**Original**
+
+```csharp
+class C {
+    void M(int x) {
+        int y = 0;
+*       Action f = () =>
+*       {
+*           int z = x;
+*           Action f2 = () =>
+*           {
+*               y += z;
+*           };
+*           f2();
+*       }
+        f();
+    }
+}
+```
+]
+
+.right-column[
+**Generated (Stage 1)**
+
+```csharp
+class C {
+    class OuterEnv {
+        int x;
+        int y;
+
+*       void <>lambda() {
+*           int z = this.x;
+*           Action f2 = () =>
+*           {
+*               y += z; // Haven't rewritten yet
+*           };
+*           f2();
+*       }
+    }
+
+    void M(int x) {
+        var outerEnv = new OuterEnv();
+        outerEnv.x = x;
+        outerEnv.y = 0;
+        Action f = outerEnv.<>lambda;
+        f();
+    }
+}
+```
+]
+
+---
+
+.left-column[
+**Generated (Stage 1)**
+
+```csharp
+class C {
+    class OuterEnv {
+        int x;
+        int y;
+
+        void <>lambda() {
+            int z = this.x;
+*           Action f2 = () =>
+*           {
+*               y += z;
+*           };
+            f2();
+        }
+    }
+
+    void M(int x) {
+        var outerEnv = new OuterEnv();
+        outerEnv.x = x;
+        outerEnv.y = 0;
+        Action f = outerEnv.<>lambda;
+        f();
+    }
+}
+```
+]
+
+.right-column[
+**Generated (Stage 2)**
+
+```csharp
+class C {
+    class InnerEnv {
+        int z;
+        OuterEnv outerEnv;
+
+*       void <>lambda() {
+*           this.outerEnv.y += this.z;
+*       }
+    }
+
+    class OuterEnv {
+        int x;
+        int y;
+
+        void <>lambda() {
+            var innerEnv = new InnerEnv();
+            innerEnv.z = this.x;
+            innerEnv.outerEnv = this;
+            Action f2 = innerEnv.lambda;
+            f2();
+        }
+    }
+
+    void M(int x) {
+        var outerEnv = new OuterEnv();
+        outerEnv.x = x;
+        outerEnv.y = 0;
+        Action f = outerEnv.<>lambda;
+        f();
+    }
+}
+```
+]
