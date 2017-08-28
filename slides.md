@@ -163,7 +163,7 @@ class C {
             int z = this.x;
             Action f2 = () =>
             {
-                y += z; // Haven't rewritten yet
+                y += z;
             };
             f2();
         }
@@ -189,7 +189,7 @@ class C {
 class C {
     void M(int x) {
         int y = 0;
-*       Action f = () =>
+        Action f = () =>
 *       {
 *           int z = x;
 *           Action f2 = () =>
@@ -217,7 +217,7 @@ class C {
 *           int z = this.x;
 *           Action f2 = () =>
 *           {
-*               y += z; // Haven't rewritten yet
+*               y += z;
 *           };
 *           f2();
 *       }
@@ -303,3 +303,93 @@ class C {
 }
 ```
 ]
+
+---
+
+# Tricky Bits: Capturing fields
+
+What if our lambda captures a field in the containing class of the top-level method?
+
+Observations:
+- An environment is a class containing fields that are used by lambdas
+- An environment has a local or parameter reference that can be captured
+
+- The containing class can contain fields that are used by lambdas
+- The containing class has a parameter reference that can be captured (`'this'`)
+
+The containing class *is* an environment. Just treat `'this'` as the reference to the parent environment and capture it if a closure captures any fields.
+
+---
+
+# Optimizations: Get Smart
+
+.center[![get smart](/get-smart.jpg)]
+
+---
+
+.left-column[
+What if we have a scope with no captured variables?
+
+Create an empty environment? 
+
+No. Instead, find the best place to put a closure method.
+We can put *both* lambdas in the same environment.
+
+As a rule:
+  1. Find the most nested scope a lambda captures variables from
+  2. Put the closure method in that scope's environment
+
+Also reduces indirection to captured variables. 
+
+If a lambda only captures from higher scopes, it can avoid walking parent environment pointer
+]
+
+.right-column[
+```csharp
+void M() {
+    int x = 0;
+    Func<Func<bool>> f1 = () =>
+    {
+        return () => x == 0;
+    }
+    f1();
+}
+```
+
+```csharp
+class Environment {
+    int x;
+    Func<bool> <>lambda1() => <>lambda2;
+    bool <>lambda2() => this.x == 0;
+}
+```
+]
+
+---
+
+# Algorithm
+
+Two phase
+
+**Phase 1 (Analysis)**:
+1. Walk tree to find and record all captured vars by lambda.
+  - Record captured in all lambdas between use and declaration.
+2. For each lambda
+  1. Find lowest scope that contains variables captured by lambda
+    - This will be the lambda's containing environment
+  2. Mark all scopes between this scope and last scope containing variables captured by lambda as capturing their parent environment
+    - If 'this' is captured, mark the highest environment scope as capturing its parent environment, as well
+
+---
+
+**Phase 2 (Rewriting)**:
+1. Set the current environment pointer to `'this'`.
+1. Walk the tree
+  1. For scope containing captured variables calculated in phase 1
+    1. Create environment type to hold variables with alpha-renamed type parameters matching the top-level method's type parameters.
+    2. Hoist all captured variables to fields on environment
+    3. Introduce synthesized statement to create environment with type arguments from containing method or lambda
+    4. Introduce synthesized statements to initialize hoisted variables
+    5. If scope is marked as capturing parent, hoist and initialize a synthesized field for the current environment pointer.
+  2. For lambda expression
+    1. Synthesize a closure method on the containing type, 
