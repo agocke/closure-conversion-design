@@ -323,7 +323,7 @@ The containing class *is* an environment. Just treat `'this'` as the reference t
 
 # Optimizations: Get Smart
 
-.center[![get smart](/get-smart.jpg)]
+.center[![get smart](get-smart.jpg)]
 
 ---
 
@@ -521,7 +521,7 @@ Data Structures:
 
 **Pass 2**: Find the closure's containing environment (if any) and linearize class environments.
 - A closure's containing environment is the nearest class environment in scope
-- If the closure captures any more class environments, mark that the current class environment as capturing its parent, and continue up the tree until we capture no more class environment. ("Linearization")
+- If the closure captures any more class environments, mark that the current class environment as capturing its parent, and continue up the tree until we capture no more class environments. ("Linearization")
 
 ---
 
