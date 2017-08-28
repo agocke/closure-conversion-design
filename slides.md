@@ -373,12 +373,12 @@ Two phase
 
 **Phase 1 (Analysis)**:
 1. Walk tree to find and record all captured vars by lambda.
-  - Record captured in all lambdas between use and declaration.
+    - Record captured in all lambdas between use and declaration.
 2. For each lambda
-  1. Find lowest scope that contains variables captured by lambda
-    - This will be the lambda's containing environment
-  2. Mark all scopes between this scope and last scope containing variables captured by lambda as capturing their parent environment
-    - If 'this' is captured, mark the highest environment scope as capturing its parent environment, as well
+    1. Find lowest scope that contains variables captured by lambda
+        - This will be the lambda's containing environment
+    2. Mark all scopes between this scope and last scope containing variables captured by lambda as capturing their parent environment
+        - If 'this' is captured, mark the highest environment scope as capturing its parent environment, as well
 
 ---
 
@@ -398,7 +398,7 @@ Two phase
 
 ---
 
-The Curve Ball: Local Functions
+# The Curve Ball: Local Functions
 
 Local functions break a lot of assumptions:
 
@@ -422,27 +422,237 @@ Local functions break a lot of assumptions:
 # The Design: Nested Functions
 
 Closure conversion vs. Lambda lifting:
-  - We often *can* rewrite all calls to local functions, meaning we can rewrite arguments
+- We often *can* rewrite all calls to local functions, meaning we can rewrite arguments
 
 When can we use a `struct` environment? When we can add `ref` parameters, i.e.
-  - Not converted to a delegate
-  - Not async or iterator
+- Not converted to a delegate
+- Not async or iterator
 
 How do we capture `struct` environments? 
-  - We don't, we pass all environments as a list of `ref` parameters to every closure
+- We don't, we pass all environments as a list of `ref` parameters to every closure
 
 Local functions can 'call forward' to other local functions
-  - We must calculate all environments and signatures ahead of time, so whenever we rewrite a call we know its final target
+- We must calculate all environments and signatures ahead of time, so whenever we rewrite a call we know its final target
+
+---
+
+# Design (cont.)
+
+Closures capture `struct` environments as parameters, `class` environments as before
+- If a closure can't take `ref` parameters, all captured environments must be classes
+- A closure can be lowered onto a `class` environment and take `struct` environments as parameters
+- Rule: Find lowest class environment in scope; that's the containing type
+
+.left-column[
+```csharp
+void M() {
+    int x = 0;
+
+    {
+        int y = 0;
+        Action a = () => y++;
+        void Local() {
+            y += x;
+        }
+        a();
+        Local();
+    }
+}
+```
+]
+
+.right-column[
+```csharp
+struct Env1 {
+    int x;
+}
+class Env2 {
+    int y;
+    void <>lambda() => this.y++;
+    void <>Local(ref Env1 env1) => this.y + env1.x;
+}
+void M()
+{
+    var env1 = new Env1();
+    env1.x = 0;
+    var env2 = new Env2();
+    env2.y = 0;
+    Action a = env2.<>lambda;
+    a();
+    env2.<>Local(ref env1);
+}
+```
+]
+
+---
+
+# `This`: Again
+
+**Problem**: What about `this`? Struct environments don't capture environment pointers
+
+**Solution**: Treat it more like a parameter: just capture it in an environment like any other parameter.
 
 ---
 
 # Introducing: The Scope Tree
 
-Problem: Local functions need more analysis and up-front info
+**Problem**: Local functions need more analysis and up-front info
 
-Solution: Build intermediate representations of semantic info 
+**Solution**: Build intermediate representations of semantic info 
 
-Scope Tree:
+Data Structures:
 
-Closure:
+**`Scope` Class** - Represents a node in the `Scope` tree and holds info on declared captured variables and closures
 
+**`Closure` Class** - Represents a nested function (lambda or anonymous function). Holds info on variables captured by this function, captured environments, and the containing environment.
+
+**`ClosureEnvironment` Class** - Represents an environment that contains captured variables. Also tracks `struct`-ness of final synthesized type, as well if this environment captures a parent environment.
+
+---
+
+# Micropasses
+
+`Scope` tree is much smaller than `BoundNode` tree
+- So we can run multiple passes cheaply
+
+**Pass 1**: Assign variables to environment based on scope (same as before) and assign captured environments
+- If any closure can't take ref params and captures vars from this environment, environment must be `class`. Otherwise, `struct`.
+- A closure captures an environment if it captures any of its variables OR if it captures a closure which captures the environment. (This may require fixed-point iteration)
+
+**Pass 2**: Find the closure's containing environment (if any) and linearize class environments.
+- A closure's containing environment is the nearest class environment in scope
+- If the closure captures any more class environments, mark that the current class environment as capturing its parent, and continue up the tree until we capture no more class environment. ("Linearization")
+
+---
+
+# Micropass: Optimization
+
+.left-column[
+Unnecessary indirection -- we may end up with a closure environment containing only `this`
+
+Optimize by removing environment and "inlining" `this`
+- If env is struct and everything which captures `this` lives in the containing type, just delete the environment and all its references.
+- If env is a class, remove environment, move all contained closures to the top level, and rewrite nested environment captures to capture `this` instead.
+]
+
+.right-column[
+```csharp
+class C {
+    int _x;    
+    void M() {
+        Action a = () =>
+        { 
+            int y = _x++;
+            Func<int> b = () => y + _x;
+        }
+    }
+}
+```
+]
+
+---
+
+# Micropass: Optimization
+
+.left-column[
+Unnecessary indirection -- we may end up with a closure environment containing only `this`
+
+Optimize by removing environment and "inlining" `this`
+- If env is struct and everything which captures `this` lives in the containing type, just delete the environment and all its references.
+- If env is a class, remove environment, move all contained closures to the top level, and rewrite nested environment captures to capture `this` instead.
+]
+
+.right-column[
+```csharp
+class C {
+    int _x;    
+    class Env1 {
+        C thisCapture;
+        void <>lambda() {
+            var env2 = new Env2();
+            env2.y = thisCapture._x++;
+            env2.env1 = this;
+            Func<int> = env2.<>lambda;
+        }
+    }
+    class Env2 {
+        int y;
+        Env1 env1;
+        void <>lambda() => this.y + env1.thisCapture._x;
+    }
+    void M() {
+        var env = new Env1();
+        Action a = env.<>lambda;
+    }
+}
+```
+]
+
+---
+
+# Micropass: Optimization
+
+.left-column[
+Unnecessary indirection -- we may end up with a closure environment containing only `this`
+
+Optimize by removing environment and "inlining" `this`
+- If env is struct and everything which captures `this` lives in the containing type, just delete the environment and all its references.
+- If env is a class, remove environment, move all contained closures to the top level, and rewrite nested environment captures to capture `this` instead.
+]
+
+.right-column[
+```csharp
+class C {
+    int _x;    
+    void <>lambda() {
+        var env2 = new Env2();
+        env2.y = this._x++;
+        env2.thisCapture = this;
+        Func<int> = env2.<>lambda;
+    }
+    class Env2 {
+        int y;
+        C thisCapture;
+        void <>lambda() => this.y + thisCapture._x;
+    }
+    void M() {
+        var env = new Env1();
+        Action a = env.<>lambda;
+    }
+}
+```
+]
+
+---
+
+# Code Generation Micropasses
+
+Now we need to synthesize some real code. Actual signatures must be calculated before rewriting.
+
+1. Synthesize closure environments
+- For each `ClosureEnvironment`, create a synthesized type to represent that environment, with alpha renamed type parameters and kind based on earlier struct/class calculation.
+
+2. Synthesize lowered methods
+- For each closure, create a synthesized method on its calculated containing environment (or the containing type if there is no containing environment)
+- Mark the method as static or instance depending on whether or not it captured a `this` closure before optimization
+- Assemble all captured struct environments and add synthesized ref parameters to the end of the method
+
+---
+
+# Rewriting
+
+Now revisit the entire bound tree, rewriting similarly to lambda algorithm.
+
+Differences:
+- Only change the "current environment pointer" for class environments.
+- Also look through environment `ref` parameters for hoisted locals, not just through a synthesized environment local variable
+- When rewriting calls to closures with `ref` environment parameters, pass synthesized arguments -- meaning a local if this is the scope where the environment was created, or a parameter if the environment was created in a higher scope 
+
+.center[
+# Et Voilà!
+]
+
+---
+class: middle, center
+
+# Questions?
