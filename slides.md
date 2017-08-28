@@ -438,3 +438,11 @@ Local functions can 'call forward' to other local functions
 
 # Introducing: The Scope Tree
 
+Problem: Local functions need more analysis and up-front info
+
+Solution: Build intermediate representations of semantic info 
+
+Scope Tree:
+
+Closure:
+
