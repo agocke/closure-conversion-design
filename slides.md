@@ -385,11 +385,56 @@ Two phase
 **Phase 2 (Rewriting)**:
 1. Set the current environment pointer to `'this'`.
 1. Walk the tree
-  1. For scope containing captured variables calculated in phase 1
-    1. Create environment type to hold variables with alpha-renamed type parameters matching the top-level method's type parameters.
-    2. Hoist all captured variables to fields on environment
-    3. Introduce synthesized statement to create environment with type arguments from containing method or lambda
-    4. Introduce synthesized statements to initialize hoisted variables
-    5. If scope is marked as capturing parent, hoist and initialize a synthesized field for the current environment pointer.
-  2. For lambda expression
-    1. Synthesize a closure method on the containing type, 
+    - For scope containing captured variables calculated in phase 1
+        1. Create environment type to hold variables with alpha-renamed type parameters matching the top-level method's type parameters.
+        2. Hoist all captured variables to fields on environment
+        3. Introduce synthesized statement to create environment with type arguments from containing method or lambda
+        4. Introduce synthesized statements to initialize hoisted variables
+        5. If scope is marked as capturing parent, hoist and initialize a synthesized field for the current environment pointer.
+    - For lambda expression
+        1. Synthesize a closure method on the containing type decided in analysis. Mark it static if the top-level method is static.
+    - For expression
+        1. If expression contains hoisted variable, rewrite to field access
+
+---
+
+The Curve Ball: Local Functions
+
+Local functions break a lot of assumptions:
+
+1. Captured variables are fields, locals, or parameters
+   - You can now capture a local function, e.g. `() => Local()`
+2. Calling a nested function is always through a delegate
+   - You can call a local function without converting it to a delegate
+3. Calls are always to a parent.
+   - Local functions can call other local functions in the same scope, e.g.
+    ```csharp
+    void M() {
+            void Local1() { Local2(); }
+            void Local2() {}
+    }
+    ```
+4. Environments can be captured in fields
+    - Local functions can use `struct` environments passed as `ref` parameters, which cannot be captured in fields
+
+---
+
+# The Design: Nested Functions
+
+Closure conversion vs. Lambda lifting:
+  - We often *can* rewrite all calls to local functions, meaning we can rewrite arguments
+
+When can we use a `struct` environment? When we can add `ref` parameters, i.e.
+  - Not converted to a delegate
+  - Not async or iterator
+
+How do we capture `struct` environments? 
+  - We don't, we pass all environments as a list of `ref` parameters to every closure
+
+Local functions can 'call forward' to other local functions
+  - We must calculate all environments and signatures ahead of time, so whenever we rewrite a call we know its final target
+
+---
+
+# Introducing: The Scope Tree
+
